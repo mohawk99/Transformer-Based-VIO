@@ -265,6 +265,8 @@ def main():
         validate=(not args.no_validate),
         timestamp=timestamp,
         meta=meta)
+    
+    torch.cuda.empty_cache()
 
 
 if __name__ == '__main__':

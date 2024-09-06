@@ -16,6 +16,9 @@ import numpy as np
 import mmdet3d
 from projects.mmdet3d_plugin.models.utils.bricks import run_time
 
+import logging
+logging.basicConfig(filename='/home/mohak/Desktop/output.log', level=logging.INFO,format='%(asctime)s - %(levelname)s - %(message)s')
+
 
 @DETECTORS.register_module()
 class BEVFormer(MVXTwoStageDetector):
@@ -102,7 +105,6 @@ class BEVFormer(MVXTwoStageDetector):
     @auto_fp16(apply_to=('img'))
     def extract_feat(self, img, img_metas=None, len_queue=None):
         """Extract features from images and points."""
-
         img_feats = self.extract_img_feat(img, img_metas, len_queue=len_queue)
         
         return img_feats
@@ -159,13 +161,18 @@ class BEVFormer(MVXTwoStageDetector):
         """Obtain history BEV features iteratively. To save GPU memory, gradients are not calculated.
         """
         self.eval()
-
         with torch.no_grad():
             prev_bev = None
+            if len(imgs_queue.shape) == 5:
+                # Handle the case where there's no len_queue dimension
+                imgs_queue = imgs_queue.unsqueeze(2)
             bs, len_queue, num_cams, C, H, W = imgs_queue.shape
+
             imgs_queue = imgs_queue.reshape(bs*len_queue, num_cams, C, H, W)
             img_feats_list = self.extract_feat(img=imgs_queue, len_queue=len_queue)
             for i in range(len_queue):
+                #print(f'img_metas_list len: {len(img_metas_list)}')
+
                 img_metas = [each[i] for each in img_metas_list]
                 if not img_metas[0]['prev_bev_exists']:
                     prev_bev = None
@@ -213,11 +220,9 @@ class BEVFormer(MVXTwoStageDetector):
         Returns:
             dict: Losses of different branches.
         """
-        
         len_queue = img.size(1)
         prev_img = img[:, :-1, ...]
         img = img[:, -1, ...]
-
         prev_img_metas = copy.deepcopy(img_metas)
         prev_bev = self.obtain_history_bev(prev_img, prev_img_metas)
 
