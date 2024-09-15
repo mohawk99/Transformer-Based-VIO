@@ -147,8 +147,8 @@ class VIOFormer_fp16(BEVFormer):
             target_sequence = torch.zeros_like(gt_poses_tensor)  
             pose_preds = self.fusion_transformer(img_feats, imu_feats, target_sequence)
 
-            print(f"Pose preds : {pose_preds.shape}")
-            print(f"GT pose : {gt_poses_tensor.shape}")
+            #print(f"Pose preds : {pose_preds.shape}")
+            #print(f"GT pose : {gt_poses_tensor.shape}")
 
             pose_preds = pose_preds.mean(dim=0) # Because shape of pose preds is (7,2,7)
 
