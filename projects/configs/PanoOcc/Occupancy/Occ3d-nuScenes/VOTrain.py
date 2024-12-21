@@ -53,17 +53,19 @@ bev_z_ = 16
 # Temporal 
 queue_length = 16 # each sequence contains `queue_length` frames.
 key_frame = 3
-time_interval = 4
+#time_interval = 4
 # Others
+transformer_dim = 128
 up_rate = [1,1,1]
 with_det = True # whether use detection branch
 num_query = 900
 
 model = dict(
-    type='PanoOcc',
+    type='VOTrain',
     use_grid_mask=True,
     video_test_mode=True,
-    time_interval = time_interval,
+    #time_interval = time_interval,
+    transformer_dim = 128,
     img_backbone=dict(
         type='ResNet',
         depth=101,
@@ -225,6 +227,31 @@ model = dict(
             iou_cost=dict(type='IoUCost', weight=0.0), # Fake cost. This is just to make it compatible with DETR head.
             pc_range=point_cloud_range),
 
+    imu_encoder=dict(
+        type='IMUTransformerEncoder',
+        transformer_dim=512,  # Example configuration
+        input_dim=6,  # Example input dimension
+        window_size=10,  # Example window size
+        encode_position=True,
+        nhead=8,
+        dim_feedforward=2048,
+        transformer_dropout=0.1,
+        transformer_activation='relu',
+        num_encoder_layers=6
+    ),
+    pose_net=dict(
+        type='PoseNet',
+        input_size=1024
+    ),
+    fusion_transformer = dict(
+    d_model=256,
+    nhead=8,
+    num_encoder_layers=6,
+    num_decoder_layers=6,
+    dim_feedforward=1024,
+    dropout=0.1
+    ),
+
     # model training and testing settings
     train_cfg=dict(pts=dict(
         grid_size=[512, 512, 1],
@@ -255,7 +282,7 @@ train_pipeline = [
     dict(type='NormalizeMultiviewImage', **img_norm_cfg),
     dict(type='PadMultiViewImage', size_divisor=32),
     dict(type='DefaultFormatBundle3D', class_names=class_names),
-    dict(type='CustomCollect3D', keys=[ 'img','voxel_semantics','mask_lidar','mask_camera','gt_bboxes_3d', 'gt_labels_3d'] )
+    dict(type='CustomCollect3D', keys=[ 'img','gt_labels_3d'] )
 ]
 
 test_pipeline = [
@@ -294,7 +321,7 @@ data = dict(
         bev_size=(bev_h_, bev_w_),
         queue_length=queue_length,
         key_frame = key_frame,
-        time_interval = time_interval,
+        #time_interval = time_interval,
         box_type_3d='LiDAR'),
     val=dict(type=dataset_type,
              data_root=data_root,

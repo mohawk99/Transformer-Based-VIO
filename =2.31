@@ -1,0 +1,6 @@
+Looking in indexes: https://pypi.tuna.tsinghua.edu.cn/simple
+Requirement already satisfied: requests in /home/mohak/anaconda3/envs/occ2/lib/python3.8/site-packages (2.28.2)
+Requirement already satisfied: charset-normalizer<4,>=2 in /home/mohak/anaconda3/envs/occ2/lib/python3.8/site-packages (from requests) (3.3.2)
+Requirement already satisfied: idna<4,>=2.5 in /home/mohak/anaconda3/envs/occ2/lib/python3.8/site-packages (from requests) (3.10)
+Requirement already satisfied: urllib3<1.27,>=1.21.1 in /home/mohak/anaconda3/envs/occ2/lib/python3.8/site-packages (from requests) (1.26.20)
+Requirement already satisfied: certifi>=2017.4.17 in /home/mohak/anaconda3/envs/occ2/lib/python3.8/site-packages (from requests) (2024.8.30)

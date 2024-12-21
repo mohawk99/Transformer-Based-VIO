@@ -5,9 +5,9 @@ def load_pkl(path):
     info = pickle.load(f)
     return info
 
-train_path = '/data/yuqi_wang/nuscenes/occ3d-nus/occ_infos_temporal_train.pkl'
-val_path = '/data/yuqi_wang/nuscenes/occ3d-nus/occ_infos_temporal_val.pkl'
-train_val_path = '/data/yuqi_wang/nuscenes/occ3d-nus/occ_infos_temporal_trainval.pkl'
+train_path = '/home/mohak/Thesis/PanoOcc/data/occ3d-nus/occ_infos_temporal_train.pkl'
+val_path = '/home/mohak/Thesis/PanoOcc/data/occ3d-nus/occ_infos_temporal_val.pkl'
+train_val_path = '/home/mohak/Thesis/PanoOcc/data/occ3d-nus/occ_infos_temporal_trainval.pkl'
 
 train_info = load_pkl(train_path)
 val_info = load_pkl(val_path)

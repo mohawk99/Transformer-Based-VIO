@@ -225,6 +225,31 @@ model = dict(
             iou_cost=dict(type='IoUCost', weight=0.0), # Fake cost. This is just to make it compatible with DETR head.
             pc_range=point_cloud_range),
 
+    imu_encoder=dict(
+        type='IMUTransformerEncoder',
+        transformer_dim=512,  # Example configuration
+        input_dim=6,  # Example input dimension
+        window_size=10,  # Example window size
+        encode_position=True,
+        nhead=8,
+        dim_feedforward=2048,
+        transformer_dropout=0.1,
+        transformer_activation='relu',
+        num_encoder_layers=6
+    ),
+    pose_net=dict(
+        type='PoseNet',
+        input_size=1024
+    ),
+    fusion_transformer = dict(
+    d_model=256,
+    nhead=8,
+    num_encoder_layers=6,
+    num_decoder_layers=6,
+    dim_feedforward=1024,
+    dropout=0.1
+    ),
+
     # model training and testing settings
     train_cfg=dict(pts=dict(
         grid_size=[512, 512, 1],

@@ -70,6 +70,9 @@ class PanoOcc(MVXTwoStageDetector):
             elif img.dim() == 5 and img.size(0) > 1:
                 B, N, C, H, W = img.size()
                 img = img.reshape(B * N, C, H, W)
+            elif img.dim() == 6:
+                B, T, V, C, H, W = img.size()
+                img = img.view(B * T * V, C, H, W)
             if self.use_grid_mask:
                 img = self.grid_mask(img)
 
