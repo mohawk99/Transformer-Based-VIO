@@ -175,6 +175,27 @@ def _get_can_bus_info(nusc, nusc_can_bus, sample):
     can_bus.extend([0., 0.])
     return np.array(can_bus)
 
+def _get_can_bus_imu_info(nusc, nusc_can_bus, sample):
+    scene_name = nusc.get('scene', sample['scene_token'])['name']
+    sample_timestamp = sample['timestamp']
+    try:
+        pose_list = nusc_can_bus.get_messages(scene_name, 'ms_imu')
+    except:
+        return np.zeros(6)  # server scenes do not have can bus information.
+    can_bus = []
+    # during each scene, the first timestamp of can_bus may be large than the first sample's timestamp
+    last_pose = pose_list[0]
+    for i, pose in enumerate(pose_list):
+        if pose['utime'] > sample_timestamp:
+            break
+        last_pose = pose
+    _ = last_pose.pop('utime')  # useless
+    l_accel = pose.pop('linear_accel')
+    r_rate = pose.pop('rotation_rate')
+    can_bus.extend(l_accel)
+    can_bus.extend(r_rate)
+    return np.array(can_bus)
+
 
 def _fill_trainval_infos(nusc,
                          nusc_can_bus,
@@ -209,6 +230,7 @@ def _fill_trainval_infos(nusc,
 
         mmcv.check_file_exist(lidar_path)
         can_bus = _get_can_bus_info(nusc, nusc_can_bus, sample)
+        can_bus_imu = _get_can_bus_imu_info(nusc, nusc_can_bus, sample)
         ##
         info = {
             'lidar_path': lidar_path,
@@ -216,6 +238,7 @@ def _fill_trainval_infos(nusc,
             'prev': sample['prev'],
             'next': sample['next'],
             'can_bus': can_bus,
+            'can_bus_imu': can_bus_imu,
             'frame_idx': frame_idx,  # temporal related info
             'sweeps': [],
             'cams': dict(),

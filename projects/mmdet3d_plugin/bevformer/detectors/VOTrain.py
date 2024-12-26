@@ -4,9 +4,11 @@ from torch.nn import TransformerEncoder, TransformerEncoderLayer
 import torch
 from torch import nn
 from projects.mmdet3d_plugin.bevformer.detectors.pano_occ import PanoOcc
-from ..modules.getgtposes import getgtposes
+from ..modules.getgtposes import getvoposes
 from mmcv.runner import force_fp32, auto_fp16
 from mmdet.models import DETECTORS
+from nuscenes.nuscenes import NuScenes
+nusc = NuScenes(version='v1.0-trainval', dataroot='/home/mohak/Thesis/PanoOcc/data/nuscenes', verbose=True)
 
 class OpticalFlowHead(nn.Module):
     def __init__(self, in_channels):
@@ -118,7 +120,9 @@ class VOTrain(PanoOcc):
 
         img_feats = self.extract_feat(img=img, img_metas=img_metas)
 
-        pred_poses = self.pose_head(img_feats[-1])  
+        pred_poses = self.pose_head(img_feats[-1])
+
+        gt_poses = getvoposes(nusc, img_metas)  
 
         pose_loss = F.mse_loss(pred_poses, gt_poses)
         losses['pose_loss'] = pose_loss
