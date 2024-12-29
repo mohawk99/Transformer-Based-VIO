@@ -12,7 +12,7 @@ import numpy as np
 from projects.mmdet3d_plugin.bevformer.detectors.pano_occ import PanoOcc
 from ..modules.IMUTransformerEncoder import IMUTransformerEncoder
 from ..modules.fusion_transformer import FusionTransformer
-from ..modules.getgtposes import getgtposes
+from ..modules.getgtposes import getvoposes,getimuposes
 from ..dense_heads.pose_head import PoseNet
 
 

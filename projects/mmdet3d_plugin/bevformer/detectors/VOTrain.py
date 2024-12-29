@@ -8,51 +8,7 @@ from ..modules.getgtposes import getvoposes
 from mmcv.runner import force_fp32, auto_fp16
 from mmdet.models import DETECTORS
 from nuscenes.nuscenes import NuScenes
-nusc = NuScenes(version='v1.0-trainval', dataroot='/home/mohak/Thesis/PanoOcc/data/nuscenes', verbose=True)
-
-class OpticalFlowHead(nn.Module):
-    def __init__(self, in_channels):
-        super(OpticalFlowHead, self).__init__()
-        self.conv1 = nn.Conv2d(in_channels * 2, 128, kernel_size=3, padding=1)
-        self.conv2 = nn.Conv2d(128, 64, kernel_size=3, padding=1)
-        self.conv3 = nn.Conv2d(64, 2, kernel_size=3, padding=1)
-
-    def forward(self, feat1, feat2):
-        flow_input = torch.cat([feat1, feat2], dim=1)
-        x = F.relu(self.conv1(flow_input))
-        x = F.relu(self.conv2(x))
-        flow = self.conv3(x)
-        return flow
-
-def photometric_loss(img1, img2, flow):
-    img2_warped = warp(img2, flow)
-    loss = F.l1_loss(img1, img2_warped)
-    return loss
-
-def warp(img, flow):
-    B, C, H, W = img.size()
-
-    # Create a mesh grid representing the pixel indices
-    grid_y, grid_x = torch.meshgrid(torch.arange(0, H), torch.arange(0, W))
-    grid = torch.stack((grid_x, grid_y), 2).float()  # Shape: (H, W, 2)
-    grid = grid.unsqueeze(0).repeat(B, 1, 1, 1)  # Shape: (B, H, W, 2)
-
-    # Normalize grid values to [-1, 1]
-    grid[..., 0] = (grid[..., 0] / (W - 1)) * 2 - 1  
-    grid[..., 1] = (grid[..., 1] / (H - 1)) * 2 - 1  
-
-    # Add optical flow to the grid
-    flow = flow.permute(0, 2, 3, 1)  # Shape: (B, H, W, 2)
-    flow_grid = grid + flow  # Add flow displacement
-
-    # Clip the grid to be within the image bounds
-    flow_grid[..., 0] = torch.clamp(flow_grid[..., 0], -1, 1)
-    flow_grid[..., 1] = torch.clamp(flow_grid[..., 1], -1, 1)
-
-    # Use grid_sample to warp the image
-    warped_img = F.grid_sample(img, flow_grid, align_corners=True)
-
-    return warped_img
+nusc = NuScenes(version='v1.0-mini', dataroot='/content/drive/MyDrive/Thesis/PanoOcc/data/occ3d-nus/', verbose=True)
 
 
 @DETECTORS.register_module()
@@ -81,7 +37,7 @@ class VOTrain(PanoOcc):
             img_neck, pts_neck, pts_bbox_head, img_roi_head, img_rpn_head,
             train_cfg, test_cfg, pretrained, video_test_mode)
         
-        self.transformer_dim = transformer_dim
+        self.transformer_dim = 256
 
         self.pose_head = nn.Sequential(
             nn.LayerNorm(self.transformer_dim),
@@ -93,7 +49,7 @@ class VOTrain(PanoOcc):
             nn.Linear(self.transformer_dim // 4, 7)  # Output: 3 for translation, 4 for rotation (quaternion)
         )
 
-        self.optical_flow_head = OpticalFlowHead(in_channels=self.transformer_dim // 4)
+        self.optical_flow_head = OpticalFlowHead(in_channels= 512)
 
     @auto_fp16(apply_to=('img'))
     def extract_feat(self, img, img_metas=None, len_queue=None):
@@ -118,19 +74,47 @@ class VOTrain(PanoOcc):
         
         losses = dict()
 
-        img_feats = self.extract_feat(img=img, img_metas=img_metas)
+        num_sequences = img.size(1)
 
-        pred_poses = self.pose_head(img_feats[-1])
+        all_pred_poses = []
 
-        gt_poses = getvoposes(nusc, img_metas)  
+        # Iterate through img_metas sequences
+        for sequence_idx in range(num_sequences):  # img_metas contains 4 sequences
+            # Extract img_feats for the current sequence
+            #print("Pose loss current meta:", sequence_img_meta)
+            current_img = img[:, sequence_idx, :, :, :, :]
+            img_feats = self.extract_feat(current_img)
 
-        pose_loss = F.mse_loss(pred_poses, gt_poses)
+            # Initialize list to collect pose predictions for the sequence
+            pred_poses = []
+
+            # Iterate through time steps (frames) in the sequence
+            B, T, C, H, W = img_feats[-1].shape  # Example shape: [Batch, Time, Channels, Height, Width]
+
+            # Flatten spatial dimensions (H, W)
+            img_feats_flat = img_feats[-1].view(B, T, C, -1).mean(dim=-1)  # Shape: [B, T, C]
+
+            # Pool temporal features if needed
+            img_feats_pooled = img_feats_flat.mean(dim=1)  # Shape: [B, C]
+
+            # Predict poses using pose_head
+            pose_output = self.pose_head(img_feats_pooled)
+
+            pred_poses.append(pose_output)
+
+            # Stack predicted poses for the sequence
+            all_pred_poses = torch.stack(pred_poses, dim=1)  # Shape: [B, T, 7]
+        # Concatenate predicted poses from all sequences
+        pose_preds = all_pred_poses.view(-1, 7)
+
+        # Ground truth poses
+        gt_poses = getvoposes(nusc, img_metas)  # Shape: [B * T, 7]
+
+        # Ensure devices match
+        device = pose_preds.device
+        gt_poses = gt_poses.to(device)
+
+
+        # Pose loss
+        pose_loss = F.mse_loss(pose_preds, gt_poses)
         losses['pose_loss'] = pose_loss
-
-        feat1, feat2 = img_feats[-2], img_feats[-1]  
-        flow_pred = self.optical_flow_head(feat1, feat2)
-
-        optical_flow_loss = photometric_loss(img[:, -2], img[:, -1], flow_pred)
-        losses['optical_flow_loss'] = optical_flow_loss
-
-        return losses

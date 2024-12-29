@@ -1,5 +1,6 @@
 from __future__ import division
-
+import sys
+sys.path.insert(0, '/home/mohak/Thesis/PanoOcc')
 import argparse
 import copy
 import mmcv
@@ -21,6 +22,7 @@ from mmdet.apis import set_random_seed
 from mmseg import __version__ as mmseg_version
 
 from mmcv.utils import TORCH_VERSION, digit_version
+
 
 
 def parse_args():

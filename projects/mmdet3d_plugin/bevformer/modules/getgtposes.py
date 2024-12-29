@@ -1,5 +1,7 @@
 import json
 from nuscenes.nuscenes import NuScenes
+import torch
+
 
 def getimuposes(sample_token):
     sample_json_path = "/home/mohak/Thesis/BEVFormer/data/nuscenes/v1.0-trainval/sample.json"
@@ -40,76 +42,44 @@ def getimuposes(sample_token):
 
     return pose
 
-def getvoposes(nusc, img_meta, sensor=None):
+def getvoposes(nusc, img_metas, sensors=None):
+    if sensors is None:
+        sensors = ['CAM_FRONT']  # Default to CAM_FRONT if no sensor is specified
+    stacked_poses = []
 
-    if sensor is None:
-        sensor = 'CAM_FRONT'
+    for i, img_meta_dict in enumerate(img_metas):
+        # Extract metadata from nested structure
+        for key, img_meta in img_meta_dict.items():
 
-    sample_token = img_meta['sample_idx']
-    
-    sample = nusc.get('sample', sample_token)
-    cam_token = sample['data'][sensor]
-    cam_data = nusc.get('sample_data', cam_token)
-    
-    ego_pose_token = cam_data['ego_pose_token']
-    ego_pose = nusc.get('ego_pose', ego_pose_token)
-    
-    translation = ego_pose['translation']  # [x, y, z]
-    rotation = ego_pose['rotation']        # Quaternion [w, x, y, z]
-    
-    return translation, rotation
+            # Check if 'sample_idx' exists
+            if 'sample_idx' not in img_meta:
+                print(f"Error: 'sample_idx' not found in img_meta[{key}]")
+                continue
 
-def print_ego_pose_for_all_sensors(nusc, img_meta):
-    sample_token = img_meta['sample_idx']
-    sample = nusc.get('sample', sample_token)
+            # Extract sample token
+            sample_token = img_meta['sample_idx']
 
-    print(f"Ego pose for sample token: {sample_token}")
-    for sensor, cam_token in sample['data'].items():
-        cam_data = nusc.get('sample_data', cam_token)
-        ego_pose_token = cam_data['ego_pose_token']
-        ego_pose = nusc.get('ego_pose', ego_pose_token)
-        
-        translation = ego_pose['translation']  # [x, y, z]
-        rotation = ego_pose['rotation']        # Quaternion [w, x, y, z]
-        print(f"Sensor: {sensor}")
-        print(f"  Translation: {translation}")
-        print(f"  Rotation: {rotation}")
+            # Get sample
+            sample = nusc.get('sample', sample_token)
 
+            for sensor in sensors:
+                if sensor not in sample['data']:
+                    print(f"Warning: Sensor {sensor} not found in sample data.")
+                    continue
 
-# def main():
-#     # Initialize NuScenes
-#     nusc = NuScenes(version='v1.0-trainval', dataroot='/home/mohak/Thesis/PanoOcc/data/nuscenes', verbose=True)
-    
-#     # Example `img_metas_list` (replace with your actual metadata)
-#     img_metas_list = [
-#         {
-#             'filename': [
-#                 './data/nuscenes/samples/CAM_FRONT/n015-2018-11-14-19-09-14+0800__CAM_FRONT__1542194035112460.jpg',
-#                 './data/nuscenes/samples/CAM_FRONT_RIGHT/n015-2018-11-14-19-09-14+0800__CAM_FRONT_RIGHT__1542194035120339.jpg',
-#                 './data/nuscenes/samples/CAM_FRONT_LEFT/n015-2018-11-14-19-09-14+0800__CAM_FRONT_LEFT__1542194035104844.jpg',
-#                 './data/nuscenes/samples/CAM_BACK/n015-2018-11-14-19-09-14+0800__CAM_BACK__1542194035137525.jpg',
-#                 './data/nuscenes/samples/CAM_BACK_LEFT/n015-2018-11-14-19-09-14+0800__CAM_BACK_LEFT__1542194035147423.jpg',
-#                 './data/nuscenes/samples/CAM_BACK_RIGHT/n015-2018-11-14-19-09-14+0800__CAM_BACK_RIGHT__1542194035127893.jpg'
-#             ],
-#             'ori_shape': [(450, 800, 3)] * 6,
-#             'img_shape': [(480, 800, 3)] * 6,
-#             'lidar2img': None,
-#             'lidar2cam': None,
-#             'pad_shape': [(480, 800, 3)] * 6,
-#             'scale_factor': 1.0,
-#             'box_mode_3d': None,
-#             'box_type_3d': None,
-#             'img_norm_cfg': None,
-#             'sample_idx': 'ba2065b0769c4361b071ef028605d7bb',
-#             'scene_token': 'f0f7132494bc4045a21868aca13b56f9'
-#         }
-#     ]
-    
-#     # Print ego pose for all sensors in the first metadata entry
-#     print_ego_pose_for_all_sensors(nusc, img_metas_list[0])
+                # Get camera data and ego pose
+                cam_token = sample['data'][sensor]
+                cam_data = nusc.get('sample_data', cam_token)
+                ego_pose_token = cam_data['ego_pose_token']
+                ego_pose = nusc.get('ego_pose', ego_pose_token)
 
-# if __name__ == "__main__":
-#     main()
+                translation = ego_pose['translation']  # [x, y, z]
+                rotation = ego_pose['rotation']        # [w, x, y, z]
+                stacked_poses.append(translation + rotation)  # Shape: [7]
+
+    # Convert to a single tensor
+    stacked_tensor = torch.tensor(stacked_poses, dtype=torch.float32)  # Shape: [B, 7]
+    return stacked_tensor
 
 # def main():
 #     # Example usage
