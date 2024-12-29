@@ -175,15 +175,6 @@ class VIOFormer(PanoOcc):
 
         VO_poses = self.vo_pose_head(img_feats[-1])  
 
-        #pose_loss = F.mse_loss(VO_poses, gt_poses)
-        #losses['pose_loss'] = pose_loss
-
-        feat1, feat2 = img_feats[-2], img_feats[-1]  
-        flow_pred = self.optical_flow_head(feat1, feat2)
-
-        optical_flow_loss = photometric_loss(img[:, -2], img[:, -1], flow_pred)
-        #losses['optical_flow_loss'] = optical_flow_loss
-
         imu_poses =self.imu_pose_head(imu_feats)
 
 

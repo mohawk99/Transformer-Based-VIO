@@ -37,7 +37,7 @@ class VOTrain(PanoOcc):
             img_neck, pts_neck, pts_bbox_head, img_roi_head, img_rpn_head,
             train_cfg, test_cfg, pretrained, video_test_mode)
         
-        self.transformer_dim = 256
+        self.transformer_dim = transformer_dim
 
         self.pose_head = nn.Sequential(
             nn.LayerNorm(self.transformer_dim),
@@ -97,3 +97,5 @@ class VOTrain(PanoOcc):
 
         pose_loss = F.mse_loss(pose_preds, gt_poses)
         losses['pose_loss'] = pose_loss
+
+        return losses
