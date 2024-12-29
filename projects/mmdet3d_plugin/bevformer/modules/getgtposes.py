@@ -44,11 +44,10 @@ def getimuposes(sample_token):
 
 def getvoposes(nusc, img_metas, sensors=None):
     if sensors is None:
-        sensors = ['CAM_FRONT']  # Default to CAM_FRONT if no sensor is specified
+        sensors = ['CAM_FRONT']
     stacked_poses = []
 
     for i, img_meta_dict in enumerate(img_metas):
-        # Extract metadata from nested structure
         for key, img_meta in img_meta_dict.items():
 
             # Check if 'sample_idx' exists

@@ -8,7 +8,7 @@ from ..modules.getgtposes import getvoposes
 from mmcv.runner import force_fp32, auto_fp16
 from mmdet.models import DETECTORS
 from nuscenes.nuscenes import NuScenes
-nusc = NuScenes(version='v1.0-mini', dataroot='/content/drive/MyDrive/Thesis/PanoOcc/data/occ3d-nus/', verbose=True)
+nusc = NuScenes(version='v1.0-mini', dataroot='/content/drive/MyDrive/Thesis/PanoOcc/data/occ3d-nus/', verbose=True) #Change acc to which dataset being used
 
 
 @DETECTORS.register_module()
@@ -49,8 +49,6 @@ class VOTrain(PanoOcc):
             nn.Linear(self.transformer_dim // 4, 7)  # Output: 3 for translation, 4 for rotation (quaternion)
         )
 
-        self.optical_flow_head = OpticalFlowHead(in_channels= 512)
-
     @auto_fp16(apply_to=('img'))
     def extract_feat(self, img, img_metas=None, len_queue=None):
         img_feats = self.extract_img_feat(img, img_metas, len_queue=len_queue)
@@ -78,43 +76,24 @@ class VOTrain(PanoOcc):
 
         all_pred_poses = []
 
-        # Iterate through img_metas sequences
-        for sequence_idx in range(num_sequences):  # img_metas contains 4 sequences
-            # Extract img_feats for the current sequence
-            #print("Pose loss current meta:", sequence_img_meta)
+        for sequence_idx in range(num_sequences):
+
             current_img = img[:, sequence_idx, :, :, :, :]
             img_feats = self.extract_feat(current_img)
-
-            # Initialize list to collect pose predictions for the sequence
             pred_poses = []
-
-            # Iterate through time steps (frames) in the sequence
-            B, T, C, H, W = img_feats[-1].shape  # Example shape: [Batch, Time, Channels, Height, Width]
-
-            # Flatten spatial dimensions (H, W)
-            img_feats_flat = img_feats[-1].view(B, T, C, -1).mean(dim=-1)  # Shape: [B, T, C]
-
-            # Pool temporal features if needed
-            img_feats_pooled = img_feats_flat.mean(dim=1)  # Shape: [B, C]
-
-            # Predict poses using pose_head
+            B, T, C, H, W = img_feats[-1].shape
+            img_feats_flat = img_feats[-1].view(B, T, C, -1).mean(dim=-1)
+            img_feats_pooled = img_feats_flat.mean(dim=1)
             pose_output = self.pose_head(img_feats_pooled)
-
             pred_poses.append(pose_output)
+            all_pred_poses = torch.stack(pred_poses, dim=1)
 
-            # Stack predicted poses for the sequence
-            all_pred_poses = torch.stack(pred_poses, dim=1)  # Shape: [B, T, 7]
-        # Concatenate predicted poses from all sequences
         pose_preds = all_pred_poses.view(-1, 7)
 
-        # Ground truth poses
         gt_poses = getvoposes(nusc, img_metas)  # Shape: [B * T, 7]
 
-        # Ensure devices match
         device = pose_preds.device
         gt_poses = gt_poses.to(device)
 
-
-        # Pose loss
         pose_loss = F.mse_loss(pose_preds, gt_poses)
         losses['pose_loss'] = pose_loss
