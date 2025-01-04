@@ -8,7 +8,7 @@ from ..modules.getgtposes import getvoposes
 from mmcv.runner import force_fp32, auto_fp16
 from mmdet.models import DETECTORS
 from nuscenes.nuscenes import NuScenes
-nusc = NuScenes(version='v1.0-mini', dataroot='/content/drive/MyDrive/Thesis/PanoOcc/data/occ3d-nus/', verbose=True) #Change acc to which dataset being used
+#nusc = NuScenes(version='v1.0-trainval', dataroot='/home/mohak/Thesis/PanoOcc/data/occ3d-nus/', verbose=True)#Change acc to which dataset being used
 
 
 @DETECTORS.register_module()

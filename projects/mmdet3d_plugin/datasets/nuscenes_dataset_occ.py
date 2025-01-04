@@ -73,11 +73,17 @@ class NuScenesOcc(NuScenesDataset):
         for i in index_list:
             i = max(0, i)
             input_dict = self.get_data_info(i)
+            #print("Input dict data:", input_dict)
 
             if input_dict is None:
                 return None
             self.pre_pipeline(input_dict)
             example = self.pipeline(input_dict, seed=seed)
+            example['img_metas'].data['can_bus_imu'] = input_dict.get('can_bus_imu', np.zeros(6))
+            #print(f"Pipeline output - img_metas: {example['img_metas'].data}")
+
+            #print(f"prepare_train_data - frame: {i}, can_bus_imu: {input_dict.get('can_bus_imu')}")
+
             if self.filter_empty_gt and \
                     (example is None or ~(example['gt_labels_3d']._data != -1).any()):
                 return None
@@ -94,6 +100,11 @@ class NuScenesOcc(NuScenesDataset):
         for i, each in enumerate(queue):
             metas_map[i] = each['img_metas'].data
             ego2global_transform_lst.append(metas_map[i]['ego2global_transformation'])
+
+
+            #metas_map[i]['can_bus_imu'] = copy.deepcopy(each['img_metas'].data['can_bus_imu']) # Adding for can bus imu info
+            #print(f"union2one - frame {i}, can_bus_imu: {metas_map[i]['can_bus_imu']}")
+
             if metas_map[i]['scene_token'] != prev_scene_token:
                 metas_map[i]['prev_bev_exists'] = False
                 prev_scene_token = metas_map[i]['scene_token']
@@ -114,6 +125,7 @@ class NuScenesOcc(NuScenesDataset):
         metas_map[len(queue)-1]["ego2global_transform_lst"] = ego2global_transform_lst
         queue[-1]['img_metas'] = DC(metas_map, cpu_only=True)
         queue = queue[-1]
+
         return queue
 
     def get_data_info(self, index):
@@ -136,6 +148,7 @@ class NuScenesOcc(NuScenesDataset):
                 - ann_info (dict): Annotation info.
         """
         info = self.data_infos[index]
+        #print("Info:",info)
         # standard protocal modified from SECOND.Pytorch
         input_dict = dict(
             # occ_gt_path=info['occ_gt_path'],
@@ -150,9 +163,13 @@ class NuScenesOcc(NuScenesDataset):
             next_idx=info['next'],
             scene_token=info['scene_token'],
             can_bus=info['can_bus'],
+            can_bus_imu=info['can_bus_imu'],# Adding for can bus imu info
             frame_idx=info['frame_idx'],
             timestamp=info['timestamp'] / 1e6,
         )
+
+        #print(f"get_data_info - index: {index}, can_bus_imu: {input_dict['can_bus_imu']}")
+
         if 'occ_gt_path' in info:
              input_dict['occ_gt_path'] = info['occ_gt_path']
         lidar2ego_rotation = info['lidar2ego_rotation']
