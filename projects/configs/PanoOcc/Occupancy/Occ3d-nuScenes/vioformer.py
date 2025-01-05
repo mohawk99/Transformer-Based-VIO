@@ -64,12 +64,14 @@ model = dict(
     type='VIOFormer',
     use_grid_mask=True,
     video_test_mode=True,
-    fusion_transformer = dict(
-    d_model=256,  # Ensure this is an integer
+    fusion_transformer=dict(
+    d_model=256,
     nhead=8,
     num_encoder_layers=6,
+    num_decoder_layers=6,
     dim_feedforward=1024,
-    dropout=0.1
+    dropout=0.1,
+    num_scales=5
     ),   
     imu_encoder = dict(
     transformer_dim=512,

@@ -9,7 +9,7 @@ from mmcv.runner import force_fp32, auto_fp16
 from mmdet.models import DETECTORS
 from nuscenes.nuscenes import NuScenes
 #nusc = NuScenes(version='v1.0-trainval', dataroot='/home/mohak/Thesis/PanoOcc/data/occ3d-nus/', verbose=True)#Change acc to which dataset being used
-
+#nusc = NuScenes(version='v1.0-mini', dataroot='/content/drive/My Drive/Thesis/PanoOcc/data/occ3d-nus/', verbose=True)
 
 @DETECTORS.register_module()
 class VOTrain(PanoOcc):
@@ -37,7 +37,7 @@ class VOTrain(PanoOcc):
             img_neck, pts_neck, pts_bbox_head, img_roi_head, img_rpn_head,
             train_cfg, test_cfg, pretrained, video_test_mode)
         
-        self.transformer_dim = transformer_dim
+        self.transformer_dim = 1280
 
         self.pose_head = nn.Sequential(
             nn.LayerNorm(self.transformer_dim),
@@ -69,28 +69,40 @@ class VOTrain(PanoOcc):
                       img_mask=None,
                       prev_bev=None,
                       gt_poses=None):
+
+        #Structure of img feats
+        #[1, 6, 256, 112, 200], [1, 6, 256, 56, 100], [1, 6, 256, 28, 50], [1, 6, 256, 14, 25], [1, 6, 256, 7, 13]
+
         
         losses = dict()
 
         num_sequences = img.size(1)
+        print("Num of sequences:", num_sequences)
 
         all_pred_poses = []
 
         for sequence_idx in range(num_sequences):
+          current_img = img[:, sequence_idx, :, :, :, :]
+          
+          img_feats = self.extract_feat(current_img)
+          
+          scale_pooled_feats = []
+          for scale_feat in img_feats:  
+              B, T, C, H, W = scale_feat.shape
+              scale_feat_flat = scale_feat.view(B, T, C, -1).mean(dim=-1)
+              scale_pooled_feats.append(scale_feat_flat)
+          
+          multi_scale_feats = torch.cat(scale_pooled_feats, dim=-1)
+          
+          aggregated_feats = multi_scale_feats.mean(dim=1)
 
-            current_img = img[:, sequence_idx, :, :, :, :]
-            img_feats = self.extract_feat(current_img)
-            pred_poses = []
-            B, T, C, H, W = img_feats[-1].shape
-            img_feats_flat = img_feats[-1].view(B, T, C, -1).mean(dim=-1)
-            img_feats_pooled = img_feats_flat.mean(dim=1)
-            pose_output = self.pose_head(img_feats_pooled)
-            pred_poses.append(pose_output)
-            all_pred_poses = torch.stack(pred_poses, dim=1)
+          pose_output = self.pose_head(aggregated_feats)
+          all_pred_poses.append(pose_output)
 
-        pose_preds = all_pred_poses.view(-1, 7)
-
+        pose_preds = torch.stack(all_pred_poses, dim=1).view(-1, 7)
+        #print("Pose pred:", pose_preds.shape)
         gt_poses = getvoposes(nusc, img_metas)  # Shape: [B * T, 7]
+        #print("GT pose:", gt_poses.shape)
 
         device = pose_preds.device
         gt_poses = gt_poses.to(device)
@@ -99,3 +111,5 @@ class VOTrain(PanoOcc):
         losses['pose_loss'] = pose_loss
 
         return losses
+
+

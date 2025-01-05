@@ -25,7 +25,7 @@ from mmcv.cnn.bricks.transformer import TransformerLayerSequence
 
 from ..modules.getgtposes import getvoposes
 from nuscenes.nuscenes import NuScenes
-nusc = NuScenes(version='v1.0-trainval', dataroot='/home/mohak/Thesis/PanoOcc/data/occ3d-nus/', verbose=True)
+nusc = NuScenes(version='v1.0-mini', dataroot='/content/drive/My Drive/Thesis/PanoOcc/data/occ3d-nus/', verbose=True)
 
 @DETECTORS.register_module()
 class VIOFormer(PanoOcc):
@@ -55,16 +55,18 @@ class VIOFormer(PanoOcc):
             img_neck, pts_neck, pts_bbox_head, img_roi_head, img_rpn_head,
             train_cfg, test_cfg, pretrained, video_test_mode)
         
-        self.transformer_dim = transformer_dim
+        self.transformer_dim = 256
+
+        self.vo_input_dim = 1280
 
         self.vo_pose_head = nn.Sequential(
-            nn.LayerNorm(self.transformer_dim),
-            nn.Linear(self.transformer_dim, self.transformer_dim // 2),
+            nn.LayerNorm(self.vo_input_dim),
+            nn.Linear(self.vo_input_dim, self.vo_input_dim // 2),
             nn.GELU(),
-            nn.Linear(self.transformer_dim // 2, self.transformer_dim // 4),
+            nn.Linear(self.vo_input_dim // 2, self.vo_input_dim // 4),
             nn.GELU(),
             nn.Dropout(0.1),
-            nn.Linear(self.transformer_dim // 4, 7)  # 3 for translation, 4 for rotation
+            nn.Linear(self.vo_input_dim // 4, 7)  # 3 for translation, 4 for rotation
         )
 
 
@@ -94,6 +96,7 @@ class VIOFormer(PanoOcc):
     def pose_loss(self, pose_preds, gt_poses):
         return torch.nn.MSELoss()(pose_preds, gt_poses)
 
+
     def forward_train(self,
                       points=None,
                       img_metas=None,
@@ -113,39 +116,50 @@ class VIOFormer(PanoOcc):
         losses = dict()
 
         # Extract features from images
-        img_feats = self.extract_feat(img=img, img_metas=img_metas, imu_data=imu_data)
         num_sequences = img.size(1)
+        print("Num of sequences:", num_sequences)
+
         all_pred_poses = []
+        stacked_multi_scale_feats = []
 
         for sequence_idx in range(num_sequences):
+          current_img = img[:, sequence_idx, :, :, :, :]
+          
+          img_feats = self.extract_feat(current_img)
+          
+          scale_pooled_feats = []
+          for scale_feat in img_feats:  
+              B, T, C, H, W = scale_feat.shape
+              scale_feat_flat = scale_feat.view(B, T, C, -1).mean(dim=-1)
+              scale_pooled_feats.append(scale_feat_flat)
+              stacked_multi_scale_feats.append(scale_pooled_feats)
+          
+          multi_scale_feats = torch.cat(scale_pooled_feats, dim=-1)
+          
+          
+          aggregated_feats = multi_scale_feats.mean(dim=1)
 
-            current_img = img[:, sequence_idx, :, :, :, :]
-            img_feats = self.extract_feat(current_img)
-            pred_poses = []
-            B, T, C, H, W = img_feats[-1].shape
-            img_feats_flat = img_feats[-1].view(B, T, C, -1).mean(dim=-1)
-            img_feats_pooled = img_feats_flat.mean(dim=1)
-            pose_output = self.pose_head(img_feats_pooled)
-            pred_poses.append(pose_output)
-            all_pred_poses = torch.stack(pred_poses, dim=1)
+          pose_output = self.vo_pose_head(aggregated_feats)
+          all_pred_poses.append(pose_output)
 
-        VO_poses = all_pred_poses.view(-1, 7)
-        print("VO poses shape:", VO_poses)
+        VO_poses = torch.stack(all_pred_poses, dim=1).view(-1, 7)
+        print("VO poses shape:", VO_poses.shape)
 
         gt_poses = getvoposes(nusc, img_metas)  # Shape: [B * T, 7]
         device = VO_poses.device
         gt_poses = gt_poses.to(device)
+        print("GT poses shape:", gt_poses.shape)
 
-
-        
 
         #Extract features from IMU data
         batch_imu_data = []
-        for meta in img_metas:
-            can_bus_data = meta['can_bus_imu']
+        for i, img_meta_dict in enumerate(img_metas):
+          for key, img_meta in img_meta_dict.items():
+            can_bus_data = img_meta['can_bus_imu']
+            print("can bus data:",can_bus_data)
             batch_imu_data.append(can_bus_data)
 
-        batch_imu_data = torch.tensor(batch_imu_data, dtype=torch.float16).to(img.device)
+        batch_imu_data = torch.tensor(batch_imu_data, dtype=torch.float32).to(img.device)
 
         if batch_imu_data.dim() == 2:
             batch_imu_data = batch_imu_data.unsqueeze(1)
@@ -153,20 +167,42 @@ class VIOFormer(PanoOcc):
             raise ValueError(f"Unexpected tensor shape: {batch_imu_data.shape}")
         
         imu_feats = self.imu_encoder({'data': batch_imu_data})
-
+        print("IMU feats shape:", imu_feats.shape)
         imu_data =self.imu_pose_head(imu_feats)
-        imu_poses = imu_data[:7]
-        imu_vel = imu_data[-3:]
-        print("IMU feats shape:", imu_feats)
-        print("IMU poses shape:", imu_poses)
+        imu_data = imu_data.squeeze(1)
+        imu_poses = imu_data[:, :7]
+        imu_vel = imu_data[:, -3:]
+        print("IMU poses shape:", imu_poses.shape) 
 
-        #Fusion Transformer
-        target_sequence = torch.zeros_like(gt_poses)  
-        fused_pose = self.fusion_transformer(img_feats, imu_feats, target_sequence)
 
-        fused_pose = fused_pose.mean(dim=0) # Because shape of pose preds is (7,2,7)
+        ##Fusion Transformer
+        # target_sequence = torch.zeros_like(gt_poses)  
+        # fused_pose = self.fusion_transformer(stacked_multi_scale_feats, imu_feats, target_sequence)
+
+        # print("Fused pose shape:", fused_pose.shape)
 
         # losses.update({'fused_pose_loss': self.pose_loss(fused_pose, gt_poses)})
         # print(f"losses : {losses}")
         # return losses
+
+        fused_poses = []
+        for sequence_idx in range(num_sequences):
+            target_sequence = gt_poses[sequence_idx::num_sequences]
+            fused_pose = self.fusion_transformer(
+                stacked_multi_scale_feats[sequence_idx],  # Visual tokens for this sequence
+                imu_feats[sequence_idx].unsqueeze(0),  # IMU tokens for this sequence
+                target_sequence  # Target sequence for transformer
+            )
+            print("Fused pose shape:", fused_pose.shape)
+            fused_poses.append(fused_pose)
+
+        fused_poses = torch.cat(fused_poses, dim=0)  # Combine all fused poses
+        print("Fused pose shape:", fused_poses.shape)
+
+        # Calculate losses
+        losses.update({'fused_pose_loss': self.pose_loss(fused_poses, gt_poses)})
+        print(f"losses : {losses}")
+        return losses
+
+
         
