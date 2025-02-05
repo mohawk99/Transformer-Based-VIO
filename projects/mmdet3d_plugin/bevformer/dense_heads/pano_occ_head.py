@@ -250,11 +250,12 @@ class PanoOccHead(BaseModule):
                 'det_occ':voxel_det,
             }
         else:
-            bev_embed, occ_outs = outputs
+            #bev_embed, occ_outs = outputs
+            bev_embed = outputs
 
             outs = {
                 'bev_embed': bev_embed,
-                'occ':occ_outs,
+                #'occ':occ_outs,
             }
 
         return outs

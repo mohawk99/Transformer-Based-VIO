@@ -13,7 +13,6 @@ from projects.mmdet3d_plugin.bevformer.detectors.pano_occ import PanoOcc
 from ..modules.IMUTransformerEncoder import IMUTransformerEncoder
 from ..modules.fusion_transformer import FusionTransformer
 from ..modules.getgtposes import getvoposes,getimuposes
-from ..dense_heads.pose_head import PoseNet
 
 from torch import nn
 from torch.nn import TransformerEncoder, TransformerEncoderLayer
@@ -25,7 +24,7 @@ from mmcv.cnn.bricks.transformer import TransformerLayerSequence
 
 from ..modules.getgtposes import getvoposes
 from nuscenes.nuscenes import NuScenes
-nusc = NuScenes(version='v1.0-mini', dataroot='/content/drive/My Drive/Thesis/PanoOcc/data/occ3d-nus/', verbose=True)
+#nusc = NuScenes(version='v1.0-mini', dataroot='/content/drive/My Drive/Thesis/PanoOcc/data/occ3d-nus/', verbose=True)
 
 @DETECTORS.register_module()
 class VIOFormer(PanoOcc):

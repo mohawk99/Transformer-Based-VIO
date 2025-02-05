@@ -57,7 +57,7 @@ key_frame = 3
 # Others
 transformer_dim = 128
 up_rate = [1,1,1]
-with_det = True # whether use detection branch
+with_det = False # whether use detection branch
 num_query = 900
 
 model = dict(
@@ -65,7 +65,13 @@ model = dict(
     use_grid_mask=True,
     video_test_mode=True,
     #time_interval = time_interval,
-    transformer_dim = 128,
+    PoseDecoder = dict(
+    embed_dim=256,        
+    num_layers=4,         
+    num_heads=8, 
+    ff_dim=512,               
+    seq_len=4           
+    ),
     img_backbone=dict(
         type='ResNet',
         depth=101,
@@ -311,21 +317,34 @@ data = dict(
     shuffler_sampler=dict(type='DistributedGroupSampler'),
     nonshuffler_sampler=dict(type='DistributedSampler')
 )
+# optimizer = dict(
+#     type='AdamW',
+#     lr=2e-4,
+#     paramwise_cfg=dict(
+#         custom_keys={
+#             'img_backbone': dict(lr_mult=0.1),
+#         }),
+#     weight_decay=0.01)
+
 optimizer = dict(
     type='AdamW',
-    lr=2e-4,
+    lr=1e-4,  # Base learning rate
     paramwise_cfg=dict(
         custom_keys={
-            'img_backbone': dict(lr_mult=0.1),
-        }),
-    weight_decay=0.01)
+            'img_backbone': dict(lr_mult=0.1),  # Lower LR for backbone
+            'pose_head': dict(lr_mult=1.5)  # Higher LR for pose head
+        }
+    ),
+    weight_decay=0.01
+)
 
-optimizer_config = dict(grad_clip=dict(max_norm=35, norm_type=2))
+
+optimizer_config = dict(grad_clip=dict(max_norm=10, norm_type=2))
 # learning policy
 lr_config = dict(
     policy='CosineAnnealing',
     warmup='linear',
-    warmup_iters=500,
+    warmup_iters=1000,
     warmup_ratio=1.0 / 3,
     min_lr_ratio=1e-3)
 total_epochs = 12

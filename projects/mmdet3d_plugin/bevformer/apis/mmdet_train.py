@@ -192,9 +192,30 @@ def custom_train_detector(model,
             hook = build_from_cfg(hook_cfg, HOOKS)
             runner.register_hook(hook, priority=priority)
 
+    # if cfg.resume_from:
+    #     runner.resume(cfg.resume_from)
+    # elif cfg.load_from:
+    #     runner.load_checkpoint(cfg.load_from)
+    # runner.run(data_loaders, cfg.workflow)
+
+
     if cfg.resume_from:
-        runner.resume(cfg.resume_from)
-    elif cfg.load_from:
-        runner.load_checkpoint(cfg.load_from)
-    runner.run(data_loaders, cfg.workflow)
+        checkpoint = torch.load(cfg.resume_from)
+        if 'optimizer' in checkpoint:
+            # Filter parameters matching the new model structure
+            state_dict = checkpoint['optimizer']['state']
+            new_state = type(state_dict)()
+            
+            for k, v in model.named_parameters():
+                if k in state_dict:
+                    new_state[k] = state_dict[k]
+            
+            checkpoint['optimizer']['state'] = new_state
+            
+        # Initialize optimizer with filtered state
+        optimizer = build_optimizer(model, cfg.optimizer)
+        if 'optimizer' in checkpoint:
+            optimizer.load_state_dict(checkpoint['optimizer'])
+    else:
+        optimizer = build_optimizer(model, cfg.optimizer)
 

@@ -308,6 +308,11 @@ class NuScenesDataset(Custom3DDataset):
         Returns:
             str: Path of the output json file.
         """
+
+
+        print("[DEBUG] Starting _format_bbox.")
+        print(f"[DEBUG] Input 'results' length: {len(results)}, jsonfile_prefix: {jsonfile_prefix}")
+    
         nusc_annos = {}
         mapped_class_names = self.CLASSES
 
@@ -363,6 +368,7 @@ class NuScenesDataset(Custom3DDataset):
         res_path = osp.join(jsonfile_prefix, 'results_nusc.json')
         print('Results writes to', res_path)
         mmcv.dump(nusc_submissions, res_path)
+        print(f"[DEBUG] Results saved to: {res_path}")
         return res_path
 
     def _evaluate_single(self,

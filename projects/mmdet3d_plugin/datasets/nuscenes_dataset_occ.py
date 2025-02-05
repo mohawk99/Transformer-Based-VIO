@@ -369,6 +369,8 @@ class NuScenesOcc(NuScenesDataset):
              info = self.data_infos[index]
              sample_token = info['token']
              save_path=os.path.join(submission_prefix,'{}.npz'.format(sample_token))
+             print("Occ_pred type:", occ_pred.type)
              np.savez_compressed(save_path,occ_pred.astype(np.uint8))
+             #np.savez_compressed(save_path, occ_pred.cpu().numpy().astype(np.uint8))
          print('\nFinished.')
 

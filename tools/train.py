@@ -1,6 +1,7 @@
 from __future__ import division
 import sys
 sys.path.insert(0, '/home/mohak/Thesis/PanoOcc')
+#sys.path.insert(0, '/content/drive/My Drive/Thesis/PanoOcc')
 import argparse
 import copy
 import mmcv

@@ -168,6 +168,7 @@ class PanoOccTransformer(BaseModule):
 
     def align_prev_bev(self, prev_bev, bev_h, bev_w, bev_z, **kwargs):
         if prev_bev is not None:
+            print("Aligning prev bevs")
             pc_range = self.cam_encoder.pc_range
             ref_y, ref_x, ref_z = torch.meshgrid(
                     torch.linspace(0.5, bev_h - 0.5, bev_h, dtype=prev_bev.dtype, device=prev_bev.device),
@@ -300,6 +301,8 @@ class PanoOccTransformer(BaseModule):
             bev_pos=bev_pos,
             **kwargs)  # bev_embed shape: bs, bev_h*bev_w, embed_dims
 
+
+        print("Prev Bev value:",prev_bev)
         bev_embed = self.bev_temporal_fuse(bev_feat, prev_bev, bev_h, bev_w, bev_z, **kwargs)
 
         bev_embed_vox = bev_embed.view(1,bev_h*bev_w,bev_z,-1)
@@ -308,6 +311,13 @@ class PanoOccTransformer(BaseModule):
         voxel_det = voxel_det.permute(0,4,3,2,1)
 
         occupancy = self.seg_decoder(voxel_feat)
+
+        #bev embed shape: torch.Size([1, 40000, 256])
+        #bev embed vox shape: torch.Size([1, 2500, 16, 256])
+
+        #VOxel feat: torch.Size([1, 32, 16, 200, 200])
+        #Occupancy: torch.Size([1, 18, 16, 200, 200])
+        #Voxel det : torch.Size([1, 200, 200, 16, 1])
         
         # [bs, h, w, z, class_num]
         occupancy = occupancy.permute(0,4,3,2,1)
@@ -344,4 +354,4 @@ class PanoOccTransformer(BaseModule):
 
             return bev_feat, occupancy, voxel_det, inter_states, init_reference_out, inter_references_out
 
-        return bev_feat, occupancy
+        return bev_feat, occupancy, voxel_feat

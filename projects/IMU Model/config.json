@@ -1,32 +1,37 @@
 {
 	"n_freq_print": 20,
-	"n_freq_checkpoint": 3,
+	"n_freq_checkpoint": 25,
 	"n_workers": 4,
 	"device_id": "cuda:0",
 	
 	"input_dim": 6,
-	"window_size":50,
-    "window_shift": 50,
-	"use_baseline": false,
+	"window_size":200,
+    "window_shift": 10,
 	
-	"encode_position":true,
-	"transformer_dim": 128,
+	"hidden_dim": 128,
 	"nhead": 8,
 	"num_encoder_layers": 4, 
-	"num_decoder_layers": 0, 
-	"dim_feedforward": 256, 
-	"transformer_dropout": 0.1, 
-	"transformer_activation": "gelu",
-	"head_activation": "gelu",
-    "baseline_dropout": 0.1,
+	"num_decoder_layers": 4, 
+	"dim_feedforward": 1024, 
+    "dropout": 0.1,
 	
 	"batch_size": 64, 
-	"lr": 1e-3,
-	"weight_decay":1e-04,
-	"eps": 1e-8,
-	"lr_scheduler_step_size": 10,
-	"lr_scheduler_gamma": 0.5,
+	"lr": 5e-4,
+	"weight_decay":5e-04,
+	"eps": 1e-6,
+	"grad_clip": 1.0,
+
+
 	"n_epochs": 50,
 
-	"to_do": "try reducing batch size and maybe learning rate"
+	"scheduler": {
+        "type": "plateau",
+        "factor": 0.5,
+        "patience": 3,
+        "cooldown": 2,
+        "min_lr": 1e-6,
+        "threshold": 1e-4,
+        "verbose": true
+    }
+
 }
