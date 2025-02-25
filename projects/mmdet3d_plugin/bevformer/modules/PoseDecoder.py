@@ -1,6 +1,63 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+import numpy as np
+
+def quaternion_to_rotation_matrix(q):
+    """Convert quaternion to rotation matrix. Works with PyTorch tensors.
+    Args:
+        q: tensor of shape (..., 4) containing w,x,y,z
+    Returns:
+        tensor of shape (..., 3, 3)
+    """
+    w, x, y, z = q[..., 0], q[..., 1], q[..., 2], q[..., 3]
+    
+    r00 = 1 - 2*y*y - 2*z*z
+    r01 = 2*x*y - 2*w*z
+    r02 = 2*x*z + 2*w*y
+    
+    r10 = 2*x*y + 2*w*z
+    r11 = 1 - 2*x*x - 2*z*z
+    r12 = 2*y*z - 2*w*x
+    
+    r20 = 2*x*z - 2*w*y
+    r21 = 2*y*z + 2*w*x
+    r22 = 1 - 2*x*x - 2*y*y
+    
+    R = torch.stack([
+        torch.stack([r00, r01, r02], dim=-1),
+        torch.stack([r10, r11, r12], dim=-1),
+        torch.stack([r20, r21, r22], dim=-1)
+    ], dim=-2)
+    
+    return R
+
+def quaternion_multiply(q1, q2):
+    """Multiply two quaternions. Works with PyTorch tensors.
+    Args:
+        q1, q2: tensors of shape (..., 4) containing w,x,y,z
+    Returns:
+        tensor of shape (..., 4)
+    """
+    w1, x1, y1, z1 = q1[..., 0], q1[..., 1], q1[..., 2], q1[..., 3]
+    w2, x2, y2, z2 = q2[..., 0], q2[..., 1], q2[..., 2], q2[..., 3]
+    
+    w = w1*w2 - x1*x2 - y1*y2 - z1*z2
+    x = w1*x2 + x1*w2 + y1*z2 - z1*y2
+    y = w1*y2 - x1*z2 + y1*w2 + z1*x2
+    z = w1*z2 + x1*y2 - y1*x2 + z1*w2
+    
+    return torch.stack([w, x, y, z], dim=-1)
+
+def quaternion_conjugate(q):
+    """Compute quaternion conjugate. Works with PyTorch tensors.
+    Args:
+        q: tensor of shape (..., 4) containing w,x,y,z
+    Returns:
+        tensor of shape (..., 4)
+    """
+    return torch.cat([q[..., :1], -q[..., 1:]], dim=-1)
+
 
 class BEVPoseEstimator(nn.Module):
     def __init__(self, max_shift=7, bev_h=50, bev_w=50):
@@ -70,8 +127,11 @@ class BEVPoseEstimator(nn.Module):
         C = 1
         
         # Reshape to (N, H, W, C)
-        bev1 = bev1.view(N, self.bev_h, self.bev_w, C)
-        bev2 = bev2.view(N, self.bev_h, self.bev_w, C)
+        # bev1 = bev1.view(N, self.bev_h, self.bev_w, C)
+        # bev2 = bev2.view(N, self.bev_h, self.bev_w, C)
+
+        bev1 = bev1.view(N, self.bev_h, self.bev_w, -1)  # -1 preserves all channels
+        bev2 = bev2.view(N, self.bev_h, self.bev_w, -1)
         
         # Permute to (N, C, H, W)
         bev1 = bev1.permute(0, 3, 1, 2)

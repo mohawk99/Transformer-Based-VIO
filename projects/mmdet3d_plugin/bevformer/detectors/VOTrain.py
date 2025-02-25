@@ -16,9 +16,17 @@ from projects.mmdet3d_plugin.models.utils.bricks import run_time
 from ..modules.PoseDecoder import *
 from ..modules.getgtposes import getvoposes
 from nuscenes.nuscenes import NuScenes
-nusc = NuScenes(version='v1.0-mini', dataroot='/content/drive/My Drive/Thesis/PanoOcc/data/occ3d-nus/', verbose=True)
+
+
+#Insert the dataset path 
+nusc = NuScenes(version='v1.0-trainval', dataroot='', verbose=True)
+
+#nusc = NuScenes(version='v1.0-mini', dataroot='/content/drive/My Drive/Thesis/PanoOcc/data/occ3d-nus/', verbose=True)
 #nusc = NuScenes(version='v1.0-trainval', dataroot='/home/mohak/Thesis/PanoOcc/data/occ3d-nus/', verbose=True)
+
+
 import math
+import torch.nn.functional as F
 @DETECTORS.register_module()
 class VOTrain(MVXTwoStageDetector):
     """PanoOcc.
@@ -172,6 +180,8 @@ class VOTrain(MVXTwoStageDetector):
         ref_R = quaternion_to_rotation_matrix(ref_quat)
         
         total_loss = 0
+        t_loss = 0
+        r_loss = 0
         for i in range(len(pred_trans_list)):
             # Current pose
             curr_pos = gt_poses[i+1, :3]
@@ -179,27 +189,33 @@ class VOTrain(MVXTwoStageDetector):
             
             # Calculate relative position in reference frame
             delta_pos = torch.matmul(ref_R.transpose(0,1), (curr_pos - ref_pos))
+            delta_pos = delta_pos.unsqueeze(0)
             
             # Calculate relative orientation
             delta_quat = quaternion_multiply(
                 quaternion_conjugate(ref_quat), 
                 curr_quat
             )
+            delta_quat = delta_quat.unsqueeze(0) 
             
             # Losses
             trans_loss = F.l1_loss(pred_trans_list[i], delta_pos)
             rot_loss = self.quaternion_distance_loss(pred_rot_list[i], delta_quat)
             
-            total_loss += trans_loss + rot_loss
-            
+            #total_loss += trans_loss + rot_loss
+
+            t_loss += trans_loss
+            r_loss += rot_loss
+
+
             # Update reference for next iteration
             ref_pos = curr_pos
             ref_quat = curr_quat
             ref_R = quaternion_to_rotation_matrix(ref_quat)
 
-        return total_loss / len(pred_trans_list)
+        return t_loss / len(pred_trans_list), r_loss / len(pred_trans_list)
 
-    def quaternion_distance_loss(pred, target):
+    def quaternion_distance_loss(self, pred, target):
         # Geodesic distance between quaternions
         dot_product = torch.sum(pred * target, dim=1).clamp(-1, 1)
         return 2 * torch.acos(torch.abs(dot_product)).mean()
@@ -281,49 +297,49 @@ class VOTrain(MVXTwoStageDetector):
         torch.cuda.empty_cache()
         losses = dict()
         len_queue = img.size(1)
+        all_bev_data = []
         
+        # First pass: Generate and store all BEV embeddings
+        for i in range(len_queue):
+            curr_img = img[:, i, ...]
+            curr_img_meta = [each[i] for each in img_metas]
+            
+            # Extract features and get BEV data
+            curr_img_feats = self.extract_feat(img=curr_img, img_metas=curr_img_meta)
+            curr_data = self.pts_bbox_head(curr_img_feats, curr_img_meta, prev_bev=None)
+            
+            # Move to CPU and store
+            cpu_data = {
+                'bev_embed': curr_data['bev_embed'].cpu(),
+                'frame_idx': i
+            }
+            all_bev_data.append(cpu_data)
+            
+            # Clear GPU memory
+            del curr_img_feats, curr_data
+            torch.cuda.empty_cache()
+
+        # Second pass: Process pairs for pose estimation
         all_pred_trans = []
         all_pred_rots = []
-
+        
         for i in range(len_queue - 1):
-
-            first_img = img[:, i, ...]
-            first_img_meta = [each[i] for each in img_metas]
-            first_img_feats = self.extract_feat(img=first_img, img_metas=first_img_meta)
-            prev_data = self.pts_bbox_head(
-                first_img_feats, first_img_meta, 
-                prev_bev=None)
-            prev_data['bev_embed'] = prev_data['bev_embed'].mean(2)
-            #prev_data = self.crop_and_pool_bev(prev_data['bev_embed'], target_size=(40,40))
-
-            second_img = img[:, i+1, ...]
-            second_img_meta = [each[i+1] for each in img_metas]
-            second_img_feats = self.extract_feat(img=second_img, img_metas=second_img_meta)
-            curr_data = self.pts_bbox_head(
-                second_img_feats, second_img_meta, 
-                prev_bev=None)
-            curr_data['bev_embed'] = curr_data['bev_embed'].mean(2)
-            #curr_data = self.crop_and_pool_bev(curr_data['bev_embed'], target_size=(40,40))
+            # Load consecutive frames back to GPU
+            prev_data = {'bev_embed': all_bev_data[i]['bev_embed'].cuda()}
+            curr_data = {'bev_embed': all_bev_data[i+1]['bev_embed'].cuda()}
             
-            # Estimate relative pose between frames
-            print("prev data shape:",prev_data['bev_embed'].shape) #(2500,1,256)
-            print("curr data shape:",curr_data['bev_embed'].shape)
+            # Estimate pose
             trans, rots = self.pose_estimator(prev_data['bev_embed'], curr_data['bev_embed'])
+            
             all_pred_trans.append(trans)
             all_pred_rots.append(rots)
-
-            del first_img, first_img_meta, first_img_feats,prev_data, second_img, second_img_meta, second_img_feats, curr_data
+            
+            # Clear GPU memory
+            del prev_data, curr_data
             torch.cuda.empty_cache()
-            
-            
 
-        gt_poses = getvoposes(nusc, img_metas, '/content/drive/My Drive/Thesis/PanoOcc/checkpoints/norm_gt_poses.json')
-        device = trans.device
-        gt_poses = gt_poses.to(device)
-        gt_translation, gt_quaternion = gt_poses[:, :3], gt_poses[:, 3:]
-
-        losses['translation_loss'] = self.compute_loss(all_pred_trans, all_pred_rots, gt_translation, gt_quaternion)
-
-
+        # Compute loss
+        gt_poses = getvoposes(nusc, img_metas, '/checkpoints/norm_gt_poses.json')
+        losses['translation_loss'],losses['quat_loss'] = self.compute_loss(all_pred_trans, all_pred_rots, gt_poses)
 
         return losses
