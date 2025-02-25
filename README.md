@@ -3,6 +3,7 @@
 - The final script which combines VO , IMU and PVGO is in progress.
 
 ### VO Pre-Training
+- Install the environment - https://github.com/Robertwyq/PanoOcc/blob/main/docs/install.md
 - Train Commmand - ./tools/dist_train.sh ./projects/configs/PanoOcc/Occupancy/Occ3d-nuScenes/VOTrain.py 1   (Same as mentioned in PanoOcc Docs)
 - Training code - projects/mmdet3d_plugin/bevformer/detectors/VOTrain.py
 - Config File - projects/configs/PanoOcc/Occupancy/Occ3d-nuScenes/VOTrain.py
