@@ -7,11 +7,11 @@
 - In case of dependency issues, run these:
 
 ```bash
-!pip install "matplotlib<3.6.0"
-!pip install pandas==1.4.4
-!pip install IPython ipdb
-!pip install yapf==0.40.1
-!pip install simplejson
+pip install "matplotlib<3.6.0"
+pip install pandas==1.4.4
+pip install IPython ipdb
+pip install yapf==0.40.1
+pip install simplejson
 ```
 - Train Commmand - ./tools/dist_train.sh ./projects/configs/PanoOcc/Occupancy/Occ3d-nuScenes/VOTrain.py   (Same as mentioned in PanoOcc Docs)
 - Training code - projects/mmdet3d_plugin/bevformer/detectors/VOTrain.py
