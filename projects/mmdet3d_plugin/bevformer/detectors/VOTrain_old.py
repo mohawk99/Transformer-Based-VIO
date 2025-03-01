@@ -1,29 +1,27 @@
 import torch
-torch.cuda.empty_cache()
+import torch.nn as nn
+import torch.nn.functional as F
+import copy
+import numpy as np
+import gc
 from mmcv.runner import force_fp32, auto_fp16
 from mmdet.models import DETECTORS
 from mmdet3d.core import bbox3d2result
 from mmdet3d.models.detectors.mvx_two_stage import MVXTwoStageDetector
 from projects.mmdet3d_plugin.models.utils.grid_mask import GridMask
-import time
-import copy
-import numpy as np
-import mmdet3d
 from projects.mmdet3d_plugin.models.utils.bricks import run_time
-from ..modules.PoseDecoder import *
+from ..modules.PoseDecoder import BEVPoseEstimator, quaternion_to_rotation_matrix, quaternion_multiply, quaternion_conjugate
 from ..modules.getgtposes import getvoposes
+import math
 from nuscenes.nuscenes import NuScenes
-#nusc = NuScenes(version='v1.0-mini', dataroot='/content/drive/My Drive/Thesis/PanoOcc/data/occ3d-nus/', verbose=True)
-nusc = NuScenes(version='v1.0-trainval', dataroot='/home/mohak/Thesis/PanoOcc/data/occ3d-nus/', verbose=True)
-
-
-
 
 @DETECTORS.register_module()
 class VOTrain(MVXTwoStageDetector):
-    """PanoOcc.
-    Args:
-        video_test_mode (bool): Decide whether to use temporal information during inference.
+    """PanoOcc with Pose Estimation using curriculum learning.
+    
+    Combines the occupancy prediction capabilities of PanoOcc with
+    pose estimation from VOTrain using curriculum learning to
+    gradually shift focus between the two tasks.
     """
 
     def __init__(self,
@@ -44,21 +42,28 @@ class VOTrain(MVXTwoStageDetector):
                  pretrained=None,
                  video_test_mode=False,
                  time_interval=1,
+                 # Curriculum learning parameters
+                 curriculum_learning=True,
+                 curriculum_epochs=24,  # Total expected training epochs
+                 init_pose_weight=0.1,  # Starting weight for pose loss
+                 max_pose_weight=1.0,   # Maximum weight for pose loss
+                 nusc_dataroot=None,    # Path to nuScenes data for pose GT
                  ):
 
-        super(VOTrain,
-              self).__init__(pts_voxel_layer, pts_voxel_encoder,
-                             pts_middle_encoder, pts_fusion_layer,
-                             img_backbone, pts_backbone, img_neck, pts_neck,
-                             pts_bbox_head, img_roi_head, img_rpn_head,
-                             train_cfg, test_cfg, pretrained)
+        super(VOTrain, self).__init__(
+            pts_voxel_layer, pts_voxel_encoder,
+            pts_middle_encoder, pts_fusion_layer,
+            img_backbone, pts_backbone, img_neck, pts_neck,
+            pts_bbox_head, img_roi_head, img_rpn_head,
+            train_cfg, test_cfg, pretrained)
+            
         self.grid_mask = GridMask(
             True, True, rotate=1, offset=False, ratio=0.5, mode=1, prob=0.7)
         self.use_grid_mask = use_grid_mask
         self.fp16_enabled = False
         self.time_interval = time_interval
 
-        # temporal
+        # Temporal
         self.video_test_mode = video_test_mode
         self.prev_frame_info = {
             'prev_bev': [],
@@ -68,11 +73,31 @@ class VOTrain(MVXTwoStageDetector):
             'prev_angle': 0,
         }
 
+        # Pose estimation related
+        self.pose_estimator = BEVPoseEstimator()
+        self.nusc_dataroot = nusc_dataroot
+        
+        # Try loading NuScenes if path is provided
+        self.nusc = NuScenes(version='v1.0-mini', dataroot='/content/drive/My Drive/Thesis/PanoOcc/data/occ3d-nus/', verbose=True)
+        # if nusc_dataroot:
+        #     try:
+        #         from nuscenes.nuscenes import NuScenes
+        #         self.nusc = NuScenes(version='v1.0-trainval', dataroot=nusc_dataroot, verbose=True)
+        #     except Exception as e:
+        #         print(f"Warning: Could not load NuScenes data: {e}")
+        #         print("Will need to provide NuScenes instance externally or through gt_poses argument")
+        
+        # Curriculum learning setup
+        self.curriculum_learning = curriculum_learning
+        self.curriculum_epochs = curriculum_epochs
+        self.init_pose_weight = init_pose_weight
+        self.max_pose_weight = max_pose_weight
+        self.current_epoch = 0
+        
     def extract_img_feat(self, img, img_metas, len_queue=None):
         """Extract features of images."""
         B = img.size(0)
         if img is not None:
-
             if img.dim() == 5 and img.size(0) == 1:
                 img.squeeze_()
             elif img.dim() == 5 and img.size(0) > 1:
@@ -89,6 +114,7 @@ class VOTrain(MVXTwoStageDetector):
                 img_feats = list(img_feats.values())
         else:
             return None
+            
         if self.with_img_neck:
             img_feats = self.img_neck(img_feats)
 
@@ -104,9 +130,7 @@ class VOTrain(MVXTwoStageDetector):
     @auto_fp16(apply_to=('img'),out_fp32=True)
     def extract_feat(self, img, img_metas=None, len_queue=None):
         """Extract features from images and points."""
-
         img_feats = self.extract_img_feat(img, img_metas, len_queue=len_queue)
-
         return img_feats
 
     def forward_pts_train(self,
@@ -118,49 +142,15 @@ class VOTrain(MVXTwoStageDetector):
                           img_metas,
                           gt_bboxes_ignore=None,
                           prev_bev=None):
-        """Forward function'
-        Args:
-            pts_feats (list[torch.Tensor]): Features of point cloud branch
-            gt_bboxes_3d (list[:obj:`BaseInstance3DBoxes`]): Ground truth
-                boxes for each sample.
-            gt_labels_3d (list[torch.Tensor]): Ground truth labels for
-                boxes of each sampole
-            img_metas (list[dict]): Meta information of samples.
-            gt_bboxes_ignore (list[torch.Tensor], optional): Ground truth
-                boxes to be ignored. Defaults to None.
-            prev_bev (torch.Tensor, optional): BEV features of previous frame.
-        Returns:
-            dict: Losses of each branch.
-        """
-
+        """Forward function for PanoOcc part."""
         outs = self.pts_bbox_head(
             pts_feats, img_metas, prev_bev)
-        # loss_inputs = [gt_bboxes_3d, gt_labels_3d, voxel_semantics, mask_camera, outs]
-        # losses = self.pts_bbox_head.loss(*loss_inputs, img_metas=img_metas)
-        return outs['bev_embed']
-
-    def forward_dummy(self, img):
-        dummy_metas = None
-        return self.forward_test(img=img, img_metas=[[dummy_metas]])
-
-    def forward(self, return_loss=True, **kwargs):
-        """Calls either forward_train or forward_test depending on whether
-        return_loss=True.
-        Note this setting will change the expected inputs. When
-        `return_loss=True`, img and img_metas are single-nested (i.e.
-        torch.Tensor and list[dict]), and when `resturn_loss=False`, img and
-        img_metas should be double nested (i.e.  list[torch.Tensor],
-        list[list[dict]]), with the outer list indicating test time
-        augmentations.
-        """
-        if return_loss:
-            return self.forward_train(**kwargs)
-        else:
-            return self.forward_test(**kwargs)
+        loss_inputs = [gt_bboxes_3d, gt_labels_3d, voxel_semantics, mask_camera, outs]
+        losses = self.pts_bbox_head.loss(*loss_inputs, img_metas=img_metas)
+        return losses, outs
 
     def obtain_history_bev(self, imgs_queue, img_metas_list):
-        """Obtain history BEV features iteratively. To save GPU memory, gradients are not calculated.
-        """
+        """Obtain history BEV features iteratively."""
         is_training = self.training
         self.eval()
 
@@ -175,14 +165,18 @@ class VOTrain(MVXTwoStageDetector):
                 prev_bev = self.pts_bbox_head(
                     img_feats, img_metas, only_bev=True)
                 prev_bev = prev_bev.permute(0, 2, 1)
-                prev_bev = prev_bev.reshape(prev_bev.shape[0], -1, self.pts_bbox_head.bev_h, self.pts_bbox_head.bev_w, self.pts_bbox_head.bev_z)
+                prev_bev = prev_bev.reshape(prev_bev.shape[0], -1, 
+                                           self.pts_bbox_head.bev_h, 
+                                           self.pts_bbox_head.bev_w, 
+                                           self.pts_bbox_head.bev_z)
                 prev_bev_lst.append(prev_bev)
         if is_training:
             self.train()
         # (bs, num_queue, embed_dims, H, W)
         return torch.stack(prev_bev_lst, dim=1)
-    
-    def compute_loss(self, pred_trans_list, pred_rot_list, gt_poses):
+        
+    def compute_pose_loss(self, pred_trans_list, pred_rot_list, gt_poses):
+        """Compute pose estimation loss."""
         device = pred_trans_list[0].device
         gt_poses = gt_poses.to(device)
         
@@ -191,7 +185,8 @@ class VOTrain(MVXTwoStageDetector):
         ref_quat = gt_poses[0, 3:]
         ref_R = quaternion_to_rotation_matrix(ref_quat)
         
-        total_loss = 0
+        t_loss = 0
+        r_loss = 0
         for i in range(len(pred_trans_list)):
             # Current pose
             curr_pos = gt_poses[i+1, :3]
@@ -199,31 +194,82 @@ class VOTrain(MVXTwoStageDetector):
             
             # Calculate relative position in reference frame
             delta_pos = torch.matmul(ref_R.transpose(0,1), (curr_pos - ref_pos))
+            delta_pos = delta_pos.unsqueeze(0)
             
             # Calculate relative orientation
             delta_quat = quaternion_multiply(
                 quaternion_conjugate(ref_quat), 
                 curr_quat
             )
+            delta_quat = delta_quat.unsqueeze(0) 
             
             # Losses
             trans_loss = F.l1_loss(pred_trans_list[i], delta_pos)
-            #rot_loss = quaternion_distance_loss(pred_rot_list[i], delta_quat)
+            rot_loss = self.quaternion_distance_loss(pred_rot_list[i], delta_quat)
             
-            total_loss += trans_loss# + rot_loss
-            
+            t_loss += trans_loss
+            r_loss += rot_loss
+
             # Update reference for next iteration
             ref_pos = curr_pos
             ref_quat = curr_quat
             ref_R = quaternion_to_rotation_matrix(ref_quat)
 
-        return total_loss / len(pred_trans_list)
+        return t_loss / len(pred_trans_list), r_loss / len(pred_trans_list)
 
-    def quaternion_distance_loss(pred, target):
-        # Geodesic distance between quaternions
+    def quaternion_distance_loss(self, pred, target):
+        """Geodesic distance between quaternions."""
         dot_product = torch.sum(pred * target, dim=1).clamp(-1, 1)
         return 2 * torch.acos(torch.abs(dot_product)).mean()
+    
+    def crop_and_pool_bev(self, bev_embed, target_size=(40,40)):
+        """Process BEV embeddings for pose estimation."""
+        # Ensure bev_embed is not a dictionary
+        if isinstance(bev_embed, dict):
+            bev_embed = bev_embed['bev_embed']
+        
+        # Ensure we have the right shape
+        if bev_embed.dim() == 3:
+            bs = bev_embed.size(0)
+            hw = bev_embed.size(1)
+            embed_dims = bev_embed.size(2)
+        else:
+            bs, hw, embed_dims = 1, bev_embed.size(0), bev_embed.size(1)
+        
+        h = w = int(math.sqrt(hw))
+        
+        # Reshape and center crop
+        bev_embed = bev_embed.view(bs, h, w, embed_dims)
+        h_start = (h - target_size[0]) // 2
+        h_end = h_start + target_size[0]
+        w_start = (w - target_size[1]) // 2
+        w_end = w_start + target_size[1]
+        
+        cropped_bev = bev_embed[:, h_start:h_end, w_start:w_end, :]
+        
+        # Restore pooling
+        cropped_bev = cropped_bev.permute(0, 3, 1, 2)  # (bs, embed_dims, h, w)
+        pooled_bev = F.adaptive_avg_pool2d(cropped_bev, output_size=(target_size[0], target_size[1]))
+        pooled_bev = pooled_bev.permute(0, 2, 3, 1)  # (bs, h, w, embed_dims)
+        
+        cropped_bev = pooled_bev.reshape(bs, -1, embed_dims)
+        
+        return cropped_bev
 
+    def get_curriculum_weight(self):
+        """Calculate curriculum weight based on current epoch."""
+        if not self.curriculum_learning:
+            return self.max_pose_weight
+        
+        # Linear increase from init_weight to max_weight
+        progress = min(1.0, self.current_epoch / self.curriculum_epochs)
+        weight = self.init_pose_weight + (self.max_pose_weight - self.init_pose_weight) * progress
+        return weight
+        
+    def set_epoch(self, epoch):
+        """Set current epoch for curriculum learning."""
+        self.current_epoch = epoch
+    
     def forward_train(self,
                       points=None,
                       img_metas=None,
@@ -239,111 +285,117 @@ class VOTrain(MVXTwoStageDetector):
                       gt_bboxes_ignore=None,
                       img_depth=None,
                       img_mask=None,
-                      ):
-        """Forward training function.
-        Args:
-            points (list[torch.Tensor], optional): Points of each sample.
-                Defaults to None.
-            img_metas (list[dict], optional): Meta information of each sample.
-                Defaults to None.
-            gt_bboxes_3d (list[:obj:`BaseInstance3DBoxes`], optional):
-                Ground truth 3D boxes. Defaults to None.
-            gt_labels_3d (list[torch.Tensor], optional): Ground truth labels
-                of 3D boxes. Defaults to None.
-            gt_labels (list[torch.Tensor], optional): Ground truth labels
-                of 2D boxes in images. Defaults to None.
-            gt_bboxes (list[torch.Tensor], optional): Ground truth 2D boxes in
-                images. Defaults to None.
-            img (torch.Tensor optional): Images of each sample with shape
-                (N, C, H, W). Defaults to None.
-            proposals ([list[torch.Tensor], optional): Predicted proposals
-                used for training Fast RCNN. Defaults to None.
-            gt_bboxes_ignore (list[torch.Tensor], optional): Ground truth
-                2D boxes in images to be ignored. Defaults to None.
-        Returns:
-            dict: Losses of different branches.
-        """
+                      gt_poses=None):
+        """Forward training function with curriculum learning."""
+        gc.collect()
+        torch.cuda.empty_cache()
+        
 
         len_queue = img.size(1)
+        prev_img = img[:, :-1, ...]
+        img_pano = img[:, -1, ...]
+
+        if prev_img.size(1)==0:
+            prev_bev = None
+        else:
+            prev_img_metas = copy.deepcopy(img_metas)
+            prev_bev = self.obtain_history_bev(prev_img, prev_img_metas)
+
+        img_metas_pano = [each[len_queue - 1] for each in img_metas]
+        if not img_metas_pano[0]['prev_bev_exists']:
+            prev_bev = None
+        img_feats = self.extract_feat(img=img_pano, img_metas=img_metas_pano)
+        
+        # Part 1: Original PanoOcc losses
+        pano_losses = self.forward_pts_train(
+            img_feats, gt_bboxes_3d, gt_labels_3d, 
+            voxel_semantics, mask_camera, img_metas_pano,
+            gt_bboxes_ignore, prev_bev)
+        
         losses = dict()
+        losses.update(pano_losses)
 
-        all_pred_trans = []
-        all_pred_rots = []
-
-        for i in range(len_queue - 1):
-            curr_pair = img[:, i:i+2, ...]
-            pair_img_metas = [each[i:i+2] for each in img_metas]
+        del img_feats, prev_img, img_metas_pano, img_pano
+        gc.collect()
+        torch.cuda.empty_cache()
+        
+        # Part 2: Pose estimation if we have multiple frames
+        if len_queue > 1:
+            # Free memory
+            gc.collect()
+            torch.cuda.empty_cache()
             
-            # Process first image of pair
-            prev_frames = img[:, :i, ...]
-            if prev_frames.size(1) > 0:
-                prev_img_metas = copy.deepcopy([each[:i] for each in img_metas])
-                prev_bev_first = self.obtain_history_bev(prev_frames, prev_img_metas)
-            else:
-                prev_bev_first = None
+            
+            # Process sequence for pose estimation
+            all_bev_data = []
+            all_pred_trans = []
+            all_pred_rots = []
+            
+            # First pass: Generate and store all BEV embeddings
+            for i in range(len_queue):
+                curr_img = img[:, i, ...]
+                curr_img_meta = [each[i] for each in img_metas]
                 
-            first_img = curr_pair[:, 0, ...]
-            first_img_meta = [each[0] for each in pair_img_metas]
-            
-            if not first_img_meta[0]['prev_bev_exists']:
-                prev_bev_first = None
+                # Extract features and get BEV data
+                curr_img_feats = self.extract_feat(img=curr_img, img_metas=curr_img_meta)
+                out_data = self.pts_bbox_head(curr_img_feats, curr_img_meta, prev_bev=None)
+                if i == len_queue-1:
+                    # Reuse outputs we already computed
+                    curr_data = {'bev_embed': out_data['bev_pose']}
+                else:
+                    curr_data = self.pts_bbox_head(curr_img_feats, curr_img_meta, prev_bev=None)
                 
-            first_img_feats = self.extract_feat(img=first_img, img_metas=first_img_meta)
-
-            
-            # Process second image of pair
-            prev_frames_second = img[:, :i+1, ...]
-            prev_img_metas_second = copy.deepcopy([each[:i+1] for each in img_metas])
-            prev_bev_second = self.obtain_history_bev(prev_frames_second, prev_img_metas_second)
-            
-            second_img = curr_pair[:, 1, ...]
-            second_img_meta = [each[1] for each in pair_img_metas]
-            
-            if not second_img_meta[0]['prev_bev_exists']:
-                prev_bev_second = None
+                # Move to CPU to save memory
+                cpu_data = {
+                    'bev_embed': curr_data['bev_embed'].cpu(),
+                    'frame_idx': i
+                }
+                all_bev_data.append(cpu_data)
                 
-            second_img_feats = self.extract_feat(img=second_img, img_metas=second_img_meta)
+                # Clear GPU memory if not the last frame data we need
+                if i != len_queue-1:
+                    del curr_img_feats, curr_data
+                    gc.collect()
+                    torch.cuda.empty_cache()
 
-            
-            # Get occupancy for previous frame
-            # prev_data = self.pts_bbox_head(
-            #     first_img_feats, first_img_meta, 
-            #     prev_bev=prev_bev_first)
-            
-            prev_data = self.forward_pts_train(first_img_feats, gt_bboxes_3d,
-                                            gt_labels_3d, voxel_semantics, mask_camera, first_img_meta,
-                                            gt_bboxes_ignore, prev_bev_first)
-            
-            # Get occupancy for current frame
-            # curr_data = self.pts_bbox_head(
-            #     second_img_feats, second_img_meta, 
-            #     prev_bev=prev_bev_second)
-            
-            curr_data = self.forward_pts_train(second_img_feats, gt_bboxes_3d,
-                                            gt_labels_3d, voxel_semantics, mask_camera, second_img_meta,
-                                            gt_bboxes_ignore, prev_bev_second)
-            
-            # Estimate relative pose between frames
-            trans, rots = self.pose_estimator(prev_data, curr_data)
-            all_pred_trans.append(trans)
-            all_pred_rots.append(rots)
-            
+            # Second pass: Process pairs for pose estimation
+            for i in range(len_queue - 1):
+                # Load consecutive frames back to GPU
+                prev_data = {'bev_embed': all_bev_data[i]['bev_embed'].cuda()}
+                curr_data = {'bev_embed': all_bev_data[i+1]['bev_embed'].cuda()}
+                
+                # Estimate pose
+                trans, rots = self.pose_estimator(prev_data['bev_embed'], curr_data['bev_embed'])
+                
+                all_pred_trans.append(trans)
+                all_pred_rots.append(rots)
+                
+                # Clear GPU memory
+                del prev_data, curr_data
+                gc.collect()
+                torch.cuda.empty_cache()
 
-        gt_poses = getvoposes(nusc, img_metas, '/content/drive/My Drive/Thesis/PanoOcc/checkpoints/norm_gt_poses.json')
-        device = trans.device
-        gt_poses = gt_poses.to(device)
-        gt_translation, gt_quaternion = gt_poses[:, :3], gt_poses[:, 3:]
-
-        losses['translation_loss'] = self.compute_loss(all_pred_trans, all_pred_rots, gt_translation, gt_quaternion)
+            # Get ground truth poses
+            if gt_poses is None:
+                if self.nusc is not None:
+                    gt_poses_path = '/checkpoints/norm_gt_poses.json'  # Change to your actual path
+                    gt_poses = getvoposes(self.nusc, prev_img_metas, gt_poses_path)
+                else:
+                    raise ValueError("No gt_poses provided and NuScenes instance not available")
+            
+            # Compute pose loss with curriculum weighting
+            t_loss, r_loss = self.compute_pose_loss(all_pred_trans, all_pred_rots, gt_poses)
+            
+            # Apply curriculum weighting
+            #weight = self.get_curriculum_weight()
+            weight = 1.0
+            losses['translation_loss'] = t_loss * weight
+            losses['quaternion_loss'] = r_loss * weight
 
         return losses
 
-    def forward_test(self, img_metas,
-                     img=None,
-                     voxel_semantics=None,
-                     mask_lidar=None,
-                     mask_camera=None,
-                     **kwargs):
+    def forward_test(self, img_metas, img=None, **kwargs):
+        # Implementation similar to PanoOcc's forward_test
         for var, name in [(img_metas, 'img_metas')]:
             if not isinstance(var, list):
                 raise TypeError('{} must be a list, but got {}'.format(
@@ -403,12 +455,17 @@ class VOTrain(MVXTwoStageDetector):
         return outs['bev_embed'], occ
 
     def simple_test(self, img_metas, img=None, prev_bev=None, rescale=False):
-        """Test function without augmentaiton."""
+        """Test function without augmentation."""
         img_feats = self.extract_feat(img=img, img_metas=img_metas)
-
-        # bbox_list = [dict() for i in range(len(img_metas))]
         new_prev_bev, occ = self.simple_test_pts(
             img_feats, img_metas, prev_bev, rescale=rescale)
-        # for result_dict, pts_bbox in zip(bbox_list, bbox_pts):
-        #     result_dict['pts_bbox'] = pts_bbox
         return new_prev_bev, occ
+        
+    def forward(self, return_loss=True, **kwargs):
+        """Calls either forward_train or forward_test depending on whether
+        return_loss=True.
+        """
+        if return_loss:
+            return self.forward_train(**kwargs)
+        else:
+            return self.forward_test(**kwargs)

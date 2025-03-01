@@ -53,7 +53,7 @@ bev_z_ = 16
 # Temporal 
 queue_length = 16 # each sequence contains `queue_length` frames.
 key_frame = 3
-#time_interval = 4
+time_interval = 4
 # Others
 transformer_dim = 128
 up_rate = [1,1,1]
@@ -64,14 +64,7 @@ model = dict(
     type='VOTrain',
     use_grid_mask=True,
     video_test_mode=True,
-    #time_interval = time_interval,
-    PoseDecoder = dict(
-    embed_dim=256,        
-    num_layers=4,         
-    num_heads=8, 
-    ff_dim=512,               
-    seq_len=4           
-    ),
+    time_interval = time_interval,
     img_backbone=dict(
         type='ResNet',
         depth=101,
@@ -263,7 +256,7 @@ train_pipeline = [
     dict(type='NormalizeMultiviewImage', **img_norm_cfg),
     dict(type='PadMultiViewImage', size_divisor=32),
     dict(type='DefaultFormatBundle3D', class_names=class_names),
-    dict(type='CustomCollect3D', keys=[ 'img','gt_labels_3d'] )
+    dict(type='CustomCollect3D', keys=[ 'img','voxel_semantics','mask_lidar','mask_camera','gt_bboxes_3d', 'gt_labels_3d'] )
 ]
 
 test_pipeline = [

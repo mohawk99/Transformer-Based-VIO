@@ -211,7 +211,7 @@ class PanoOccHead(BaseModule):
                 prev_bev=prev_bev
             )
         if self.with_det:
-            bev_embed, occ_outs, voxel_det, hs, init_reference, inter_references = outputs
+            bev_embed, occ_outs, voxel_det, hs, init_reference, inter_references,bev_embed_det = outputs
             hs = hs.permute(0, 2, 1, 3)
             outputs_classes = []
             outputs_coords = []
@@ -248,13 +248,14 @@ class PanoOccHead(BaseModule):
                 'all_bbox_preds': outputs_coords,
                 'occ': occ_outs,
                 'det_occ':voxel_det,
+                'bev_pose': bev_embed_det
             }
         else:
             #bev_embed, occ_outs = outputs
             bev_embed = outputs
 
             outs = {
-                'bev_embed': bev_embed,
+                'bev_pose': bev_embed,
                 #'occ':occ_outs,
             }
 

@@ -352,6 +352,6 @@ class PanoOccTransformer(BaseModule):
 
             inter_references_out = inter_references
 
-            return bev_feat, occupancy, voxel_det, inter_states, init_reference_out, inter_references_out
+            return bev_feat, occupancy, voxel_det, inter_states, init_reference_out, inter_references_out, bev_embed_det
 
         return bev_embed_det
