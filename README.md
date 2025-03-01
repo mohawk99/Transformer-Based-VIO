@@ -13,7 +13,7 @@
     pip install yapf==0.40.1
     pip install simplejson
     ```
-- Train Commmand - ./tools/dist_train.sh ./projects/configs/PanoOcc/Occupancy/Occ3d-nuScenes/VOTrain.py   (Same as mentioned in PanoOcc Docs)
+- Train Commmand - ./tools/dist_train.sh ./projects/configs/PanoOcc/Occupancy/Occ3d-nuScenes/VOTrain_old.py   (Same as mentioned in PanoOcc Docs)
 - Training code - projects/mmdet3d_plugin/bevformer/detectors/VOTrain.py
 - Config File - projects/configs/PanoOcc/Occupancy/Occ3d-nuScenes/VOTrain.py
 
